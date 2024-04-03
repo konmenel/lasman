@@ -50,7 +50,8 @@ def _write_loop_with_progress_bar(
     chunk_size: int,
 ) -> None:
     npoints: int = reader.header.point_count
-    with alive_bar(npoints // chunk_size) as bar:
+    monitor_str = "{count}k/{total}k points done [{percent:.1f}%]"
+    with alive_bar(npoints // chunk_size, monitor=monitor_str) as bar:
         for points in reader.chunk_iterator(chunk_size):
             contained = _get_contained_list(polygons, points)
             writer.write_points(points[contained])
