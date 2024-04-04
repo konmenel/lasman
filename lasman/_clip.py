@@ -89,7 +89,7 @@ def _main_loop_with_progress_bar(
     intersection: bool,
 ) -> None:
     npoints: int = reader.header.point_count
-    monitor_str = "{count}k/{total}k points done [{percent:.1f}%]"
+    monitor_str = "{count}k/{total}k points done [{percent:.1%}]"
     with alive_bar(ceil(npoints / chunk_size), monitor=monitor_str) as bar:
         for points in reader.chunk_iterator(chunk_size):
             _find_contained_and_write(
