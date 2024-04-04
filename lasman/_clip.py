@@ -55,31 +55,6 @@ def _is_inside(polygons: gpd.GeoSeries, x: float, y: float, intersection: bool) 
     return reduce_func((p.contains(Point(x, y)) for p in polygons))
 
 
-def _get_contained_list(
-    polygons: gpd.GeoSeries,
-    points: laspy.lasreader.PointChunkIterator,
-    external: bool,
-    intersection: bool,
-) -> list[bool]:
-    return [
-        _is_inside(polygons, x, y, intersection) ^ external
-        for x, y in zip(points.x, points.y)
-    ]
-
-
-def _find_contained_and_write(
-    writer: laspy.LasWriter,
-    polygons: gpd.GeoSeries,
-    external: bool,
-    intersection: bool,
-    bar,  # Alive bar instance
-    points,
-) -> None:
-    contained = _get_contained_list(polygons, points, external, intersection)
-    writer.write_points(points[contained])
-    bar()
-
-
 def _main_loop_with_progress_bar(
     writer: laspy.LasWriter,
     reader: laspy.LasReader,
@@ -92,9 +67,12 @@ def _main_loop_with_progress_bar(
     monitor_str = "{count}k/{total}k points done [{percent:.1%}]"
     with alive_bar(ceil(npoints / chunk_size), monitor=monitor_str) as bar:
         for points in reader.chunk_iterator(chunk_size):
-            _find_contained_and_write(
-                writer, polygons, external, intersection, bar, points
-            )
+            contained = [
+                _is_inside(polygons, x, y, intersection) ^ external
+                for x, y in zip(points.x, points.y)
+            ]
+            writer.write_points(points[contained])
+            bar()
 
 
 def main(args=None) -> int:
