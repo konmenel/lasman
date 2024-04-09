@@ -1,12 +1,13 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Ok, Result};
 use indicatif::{HumanDuration, ProgressBar, ProgressStyle};
-use las::{Read, Reader, Write, Writer};
+use las::{Header, Read, Reader, Write, Writer};
 use num_format::{Locale, ToFormattedString};
 use rayon::prelude::*;
 use shapefile::record::polygon::GenericPolygon;
 use shapefile::record::traits::{GrowablePoint, HasXY, ShrinkablePoint};
 use shapefile::{Point, Polygon, PolygonRing, Shape};
 use std::fmt;
+use std::io::{self, Write as StdWrte};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -45,46 +46,69 @@ where
     Polygon::with_rings(poly_rings)
 }
 
-fn winding_number(point: &las::Point, polygon: &Polygon) -> i32 {
+fn transform_point(point: &mut Point, scales: &[f64; 2], offsets: &[f64; 2]) {
+    point.x -= offsets[0];
+    point.y -= offsets[1];
+    point.x /= scales[0];
+    point.y /= scales[1];
+}
+
+fn winding_number(
+    point: &las::Point,
+    polygon: &Polygon,
+    scales: &[f64; 2],
+    offsets: &[f64; 2],
+) -> i32 {
     let mut wn = 0;
-    for ring in polygon.rings() {
-        for window in ring.points().windows(2) {
-            let p1 = window.first().unwrap();
-            let p2 = window.last().unwrap();
+    let mut point = Point::new(point.x, point.y);
+    transform_point(&mut point, scales, offsets);
+    for window in polygon.rings()[0].points().windows(2) {
+        let mut p1 = window.first().unwrap().clone();
+        // let mut p1 = Point::new(p1.x, p1.y);
+        transform_point(&mut p1, scales, offsets);
+        let mut p2 = window.last().unwrap().clone();
+        transform_point(&mut p2, scales, offsets);
 
-            // Array to sort from low to high point
-            let mut ps: [&Point; 2] = [p1, p2];
-            ps.sort_by(|&a, &b| a.y.partial_cmp(&b.y).unwrap());
+        if point.x > p1.x && point.x > p2.x {
+            continue;
+        }
+        if point.y > p1.y.max(p2.y) {
+            continue;
+        }
+        if point.y < p1.y.min(p2.y) {
+            continue;
+        }
+        if p1.y == p2.y {
+            continue;
+        }
 
-            // Get Intersection
-            let x_intersect = if p1.y == p2.y {
-                f64::INFINITY // Dont care about parallel lines.
-            } else if p1.x == p2.x {
-                p1.x // The simplest case
+        // Check for intesection
+        let x_inters = (point.y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y) + p1.x;
+        if p1.x == p2.x || x_inters >= point.x {
+            if p2.y > p1.y {
+                wn += 1;
             } else {
-                let k = (p1.y - p2.y) / (p2.x - p1.x);
-                let b = p1.y - k * p1.x;
-                (point.y - b) / k
-            };
-            // Check for the x of the intersect
-            if x_intersect > point.x && ps[0].y <= point.y && ps[1].y >= point.y {
-                let dir = (p2.y > p1.y) as i32 * 2 - 1;
-                wn += dir;
+                wn -= 1;
             }
         }
     }
     wn
 }
 
-fn is_pnt_in_poly(point: &las::Point, polygon: &Polygon) -> bool {
-    winding_number(point, polygon) != 0
+fn is_pnt_in_poly(
+    point: &las::Point,
+    polygon: &Polygon,
+    scales: &[f64; 2],
+    offsets: &[f64; 2],
+) -> bool {
+    winding_number(point, polygon, scales, offsets) != 0
 }
 
-fn load_polygons<P: AsRef<Path>>(shpfile: P) -> Result<Vec<Polygon>> {
-    let mut reader = shapefile::ShapeReader::from_path(shpfile.as_ref()).with_context(|| {
+fn load_polygons<P: AsRef<Path>>(shapefile: P) -> Result<Vec<Polygon>> {
+    let mut reader = shapefile::ShapeReader::from_path(shapefile.as_ref()).with_context(|| {
         format!(
             "Cannot open shapefile \"{}\"",
-            shpfile.as_ref().to_string_lossy()
+            shapefile.as_ref().to_string_lossy()
         )
     })?;
     Ok(reader
@@ -104,13 +128,26 @@ fn filter_fn(
     polygons: &Vec<Polygon>,
     point: &las::Point,
     external: bool,
+    scales: &[f64; 2],
+    offsets: &[f64; 2],
 ) -> bool {
-    let mut poly_iter = polygons.iter();
-    let op = |poly| is_pnt_in_poly(point, poly) ^ external;
+    let op = |poly| is_pnt_in_poly(point, poly, scales, offsets) != external;
     match strategy {
-        Strategy::Union => poly_iter.any(op),
-        Strategy::Intersection => poly_iter.all(op),
+        Strategy::Union => polygons.iter().any(op),
+        Strategy::Intersection => polygons.iter().all(op),
     }
+}
+
+fn get_scale_and_offsets(header: &Header) -> Result<[[f64; 2]; 2]> {
+    let raw_header = header
+        .clone()
+        .into_raw()
+        .with_context(|| format!("Error converting las header into raw las header"))?;
+
+    Ok([
+        [raw_header.x_scale_factor, raw_header.y_scale_factor],
+        [raw_header.x_offset, raw_header.y_offset],
+    ])
 }
 
 fn print_info<P: AsRef<Path> + std::fmt::Display>(
@@ -141,7 +178,7 @@ fn print_info<P: AsRef<Path> + std::fmt::Display>(
     );
     println!("[INFO] Clip strategy: {}", strategy);
     println!(
-        "[INFO] Clip point external or internal points: {}",
+        "[INFO] Cliping {} points",
         if external { "external" } else { "internal" }
     );
     println!("[INFO] Number of threads: {}", nthreads);
@@ -177,23 +214,43 @@ pub fn clip<P: AsRef<Path> + std::fmt::Display>(
             .build_global()
             .with_context(|| format!("Cannot set number of nthreads to {nthreads}"))?;
     }
-
     print_info(
         &lasfile, &shapefile, &outfile, strategy, external, nthreads, read_chunk,
     );
 
+    // Check if outfile already exists
+    if Path::new(outfile.as_ref()).try_exists()? {
+        println!("Output file \"{}\" already exists.", outfile);
+        let mut user_inpur = String::new();
+
+        while !["y", "yes", "n", "no"].contains(&user_inpur.trim().to_lowercase().as_str())
+        {
+            user_inpur.clear();
+            print!("Overwrite [y/n]: ");
+            io::stdout().flush()?;
+            io::stdin().read_line(&mut user_inpur).unwrap();
+        }
+
+        if ["n", "no"].contains(&user_inpur.trim().to_lowercase().as_str()) {
+            println!("Run cancelled!");
+            return Ok(());
+        }
+    }
+
     // Getting polygons
     let polygons = load_polygons(&shapefile)?;
     println!(
-        "[1/2] {} polygons loaded from \"{}\".",
+        "[1/2] {} polygon{} loaded from \"{}\".",
         polygons.len(),
+        if polygons.len() > 1 { "s" } else { "" },
         shapefile.as_ref().to_string_lossy()
     );
 
-    // Open reader and writer
+    // Open input and output las files
     let mut reader = Reader::from_path(lasfile.as_ref())
         .with_context(|| format!("Cannot open las file \"{lasfile}\""))?;
-    let mut writer = Writer::from_path(outfile.as_ref(), reader.header().clone())
+    let out_header = reader.header().clone();
+    let mut writer = Writer::from_path(outfile.as_ref(), out_header)
         .with_context(|| format!("Cannot open las output file \"{outfile}\""))?;
 
     // Prepare progress bar
@@ -202,11 +259,16 @@ pub fn clip<P: AsRef<Path> + std::fmt::Display>(
 
     // Main loop
     let started = Instant::now();
+
     println!("[2/2] Clipping points");
-    while let Ok(points) = reader.read_n(read_chunk) {
+    let points_total = reader.header().number_of_points();
+    let [scales, offsets] = get_scale_and_offsets(reader.header())?;
+    let mut points_processes = 0;
+    while points_processes < points_total {
+        let points = reader.read_n(read_chunk.min(points_total - points_processes))?;
         let contained: Vec<&las::Point> = points
             .par_iter()
-            .filter(|&pnt| filter_fn(strategy, &polygons, pnt, external))
+            .filter(|&pnt| filter_fn(strategy, &polygons, pnt, external, &scales, &offsets))
             .collect();
 
         for &p in contained.iter() {
@@ -214,9 +276,19 @@ pub fn clip<P: AsRef<Path> + std::fmt::Display>(
                 .write(p.clone())
                 .with_context(|| format!("Error while writing points"))?;
         }
-        pb.inc(points.len() as u64 / 1000);
+        points_processes += points.len() as u64;
+        pb.set_position(points_processes / 1000);
     }
     pb.finish();
-    println!("Done in {}", HumanDuration(started.elapsed()));
+
+    println!("Done in {}", HumanDuration(started.elapsed()),);
+    println!(
+        "Number of points written to \"{}\": {}",
+        outfile,
+        writer
+            .header()
+            .number_of_points()
+            .to_formatted_string(&Locale::en)
+    );
     Ok(())
 }

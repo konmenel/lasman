@@ -23,6 +23,7 @@ enum Tool {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
     Ok(match &cli.tool {
         Tool::Clip(args) => {
             let lasfile = &args.input;
@@ -35,7 +36,7 @@ fn main() -> Result<()> {
             };
             let external = args.external;
             let nthreads = args.threads;
-            let chunk_size = args.chuck_size;
+            let chunk_size = args.chunk_size;
             clip(
                 lasfile, shapefile, outfile, strategy, external, nthreads, chunk_size,
             )?

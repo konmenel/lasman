@@ -28,7 +28,7 @@ pub struct ClipCliArgs {
     /// The size of the chuck (number of points) that will be read
     /// per iteration while processing
     #[arg(long, default_value_t = 1_234_567)]
-    pub chuck_size: u64,
+    pub chunk_size: u64,
 
     /// The number of threads. If 0, all avaialble cores will be used
     #[arg(long, default_value_t = 0)]
