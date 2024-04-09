@@ -23,9 +23,6 @@ enum Tool {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    println!("{:?}", cli);
-    println!("{:?}", cli.tool);
-
     Ok(match &cli.tool {
         Tool::Clip(args) => {
             let lasfile = &args.input;
