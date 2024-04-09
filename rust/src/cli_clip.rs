@@ -19,10 +19,9 @@ pub struct ClipCliArgs {
     #[arg(long)]
     pub external: bool,
 
-    /// By default, point that are inside any of the polygons will
-    /// be included. If set and multiple polygons are in the shapefile,
-    /// only points inside the intersection (if there is one) will be
-    /// included
+    /// Only points inside the intersection (if there is one) of
+    /// the polygons will be included. By default, points in any of
+    /// the polygons are included.
     #[arg(long)]
     pub intersect: bool,
     
