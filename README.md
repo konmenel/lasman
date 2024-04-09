@@ -1,8 +1,8 @@
-# Lasman Rust
-lasman implementation in Rust
+# LASman in Rust
+LAS manipulation tools in Rust
 
 ## Tools
-Just one tool is available because thats all I need right now!
+Just one tool is available because that's all I need right now!
 - clip: Clips points according to polygon(s) defined in a given shapefile.
 
 ## Install via Cargo
@@ -26,3 +26,4 @@ lasman clip -h
 
 ## TODO
 - Handle polygons with holes
+- Handle all PolygonRings in Polygon
