@@ -19,3 +19,8 @@ las = { git="https://github.com/konmenel/las-rs.git", version = "0.8", features 
 num-format = "0.4.4"
 rayon = "1.10.0"
 shapefile =  "0.6"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
