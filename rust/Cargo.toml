@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1.0.81"
 clap = { version = "4.5.4", features = ["derive"] }
 indicatif = {version = "0.17.8", features = ["rayon"]}
-las = { path="./las-rs", version = "0.8", features = ["laz-parallel"] }
+las = { git="https://github.com/konmenel/las-rs.git", version = "0.8", features = ["laz-parallel"] }
 num-format = "0.4.4"
 rayon = "1.10.0"
 shapefile =  "0.6"
